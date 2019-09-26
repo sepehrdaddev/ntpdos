@@ -128,18 +128,32 @@ void version() { std::cout << "ntpdos " << VERSION << '\n'; }
 void banner() { std::cout << "--==[ ntpdos by sepehrdad ]==--\n\n"; }
 
 void help() {
-  std::cout << "usage:\n\n\
-  ntpdos -t <addr> -s <addr> [options] | [misc]\n\n"
-            << "options:\n\n"
-            << "  -t <addr>    - target ip address\n"
-            << "  -T <file>    - list of target ip addresses\n"
-            << "  -s <addr>    - ntp server ip address\n"
-            << "  -S <file>    - list of ntp server ip addresses\n"
-            << "  -p <num>     - number of parallel processes (default: 80)\n"
-            << "  -d <num>     - delay in microsecs (default: 1000)\n\n"
-            << "misc:\n\n"
-            << "  -V           - show version\n"
-            << "  -H           - show help\n\n";
+  std::cout
+      << "usage:\n\n"
+      << "  ntpdos -t <addr> -s <addr> [options] | [misc]\n\n"
+      << "options:\n\n"
+      << "  -t <addr>    - target ip address\n"
+      << "  -T <file>    - list of target ip addresses\n"
+      << "  -s <addr>    - ntp server ip address\n"
+      << "  -S <file>    - list of ntp server ip addresses\n"
+      << "  -p <num>     - number of parallel processes (default: 80)\n"
+      << "  -d <num>     - delay in microsecs (default: 1000)\n\n"
+      << "misc:\n\n"
+      << "  -V           - show version\n"
+      << "  -H           - show help\n\n"
+      << "example:\n\n"
+      << "  # Attack 127.0.0.1 with servers from servers.lst\n"
+      << "  $ ntpdos -t 127.0.0.1 -S servers.lst\n\n"
+      << "  # Attack targets from targets.lst with 192.168.2.11 server\n"
+      << "  $ ntpdos -T targets.lst -s 192.168.2.11\n\n"
+      << "  # Attack targets from targets.lst with servers from servers.lst\n"
+      << "  $ ntpdos -T targets.lst -S servers.lst\n\n"
+      << "  # Attack 1.2.3.4 with 5.6.7.8 using 200 parallel processes\n"
+      << "  $ ntpdos -t 1.2.3.4 -s 5.6.7.8 -p 200\n\n"
+      << "  # Attack 1.2.3.4 with 5.6.7.8 with 1 microsec delay\n"
+      << "  $ ntpdos -t 1.2.3.4 -s 5.6.7.8 -d 1\n\n"
+      << "notes:\n\n"
+      << "  * list of ip addresses should have 1 ip address per line\n\n";
 }
 
 void load_file(std::string filename, std::vector<std::string> &vec) {
@@ -199,7 +213,7 @@ int main(int argc, char *argv[]) {
     case 'd':
       delay = std::strtol(optarg, NULL, 10);
       if (delay <= 0) {
-        ERR("delay can't be negative");
+        ERR("delay can't be less than 1");
         exit(EXIT_FAILURE);
       }
       break;

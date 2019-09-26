@@ -1,0 +1,25 @@
+# Attention: this is a Bash Script, not `sh`.
+
+#_ntpdos_options="-t <addr>    - target ip address.
+#-T <file>    - list of target ip addresses.
+#-s <addr>    - ntp server ip address.
+#-S <file>    - list of ntp server ip addresses.
+#-p <num>     - number of parallel processes (default: 80).
+#-d <num>     - delay in microsecs (default: 1000).
+#-V           - show version.
+#-H           - show help."
+
+_ntpdos()
+{
+    local current options
+
+    options="-t -T -s -S -p -d -V -H"
+
+    current="${COMP_WORDS[COMP_CWORD]}"
+
+    if [[ "${current}" == -* ]]; then
+        COMPREPLY=($(compgen -W "${options}" -- ${current}))
+    fi
+}
+
+complete -F _ntpdos ntpdos

